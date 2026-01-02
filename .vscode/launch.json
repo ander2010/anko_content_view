@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Flask (app.py)",
+      "type": "python",
+      "request": "launch",
+      "module": "flask",
+      "args": [
+        "run",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8085"
+      ],
+      "env": {
+        "FLASK_APP": "app.py",
+        "FLASK_DEBUG": "1",
+        "DEBUG": "1"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "jinja": true
+    }
+  ]
+}
