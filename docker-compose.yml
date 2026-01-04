@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  supabase-s3-view:
+    build: .
+    image: supabase-s3-view:latest
+    ports:
+      - "8085:8085"
+    env_file:
+      - .env
+    environment:
+      - SUPABASE_S3_ENDPOINT=${SUPABASE_S3_ENDPOINT}
+      - SUPABASE_S3_REGION=${SUPABASE_S3_REGION}
+      - SUPABASE_S3_BUCKET=${SUPABASE_S3_BUCKET}
+      - SUPABASE_S3_ACCESS_KEY=${SUPABASE_S3_ACCESS_KEY}
+      - SUPABASE_S3_SECRET_KEY=${SUPABASE_S3_SECRET_KEY}
+      - FILES_DIR=${FILES_DIR:-documents}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
