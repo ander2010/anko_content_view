@@ -9,7 +9,5 @@ COPY . .
 
 EXPOSE 8085
 
-ENV FLASK_APP=app.py \
-    FLASK_DEBUG=1 \
-    DEBUG=1
-CMD ["flask", "run", "--host", "0.0.0.0", "--port", "8085", "--debug"]
+ENV FLASK_APP=app.py
+CMD ["flask", "run", "--host", "0.0.0.0", "--port", "8085"]
