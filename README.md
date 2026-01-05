@@ -13,6 +13,7 @@ Set the following environment variables (see `.env.example` pattern if you have 
 - `FILES_DIR` – (optional) Base folder to scope access, defaults to `documents`
 - `LOG_LEVEL` – (optional) Logging level, defaults to `INFO`
 - `DEBUG` or `FLASK_DEBUG` – (optional) When truthy, disables bearer auth requirement
+- `ALLOWED_HOSTS` – Comma-separated list of hostnames allowed to reach the service (default: `anko-swart.vercel.app`)
 
 ## Run
 
@@ -50,7 +51,7 @@ Two endpoints accept `GET` requests:
 
 Notes:
 
-- When `DEBUG`/`FLASK_DEBUG` is falsy, include `Authorization: Bearer <token>` with each request.
+- When `DEBUG`/`FLASK_DEBUG` is falsy, requests must come from an allowed `Host` header (default `anko-swart.vercel.app`); no Authorization header is required.
 - Paths are restricted to the `FILES_DIR` prefix. If you include the bucket name in `file`, it must match `SUPABASE_S3_BUCKET`.
 - Range requests are forwarded, so partial downloads work.
 

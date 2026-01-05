@@ -38,6 +38,11 @@ S3_ACCESS_KEY = os.getenv("SUPABASE_S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.getenv("SUPABASE_S3_SECRET_KEY", "")
 FILES_DIR = os.getenv("FILES_DIR", "documents").strip("/ ")
 FILES_DIR_PREFIX = f"{FILES_DIR}/" if FILES_DIR else ""
+ALLOWED_HOSTS = [
+    host.strip().lower()
+    for host in os.getenv("ALLOWED_HOSTS", "anko-swart.vercel.app").split(",")
+    if host.strip()
+]
 
 if not all([S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY, S3_SECRET_KEY, DEFAULT_BUCKET]):
     raise RuntimeError("Missing required Supabase S3 configuration")
@@ -56,6 +61,16 @@ app = Flask(__name__)
 # ------------------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------------------
+
+def ensure_allowed_host():
+    if DEBUG_MODE:
+        return
+
+    # Prefer Host header to align with typical reverse proxies
+    host_header = request.headers.get("Host", "").lower()
+    host = host_header.split(":", 1)[0]
+    if not host or host not in ALLOWED_HOSTS:
+        error_response(403, "Host not allowed")
 
 def error_response(status: int, detail: str):
     resp = jsonify({"detail": detail})
@@ -195,9 +210,7 @@ def view_file():
     if not file_param:
         error_response(400, "file path is required")
 
-    auth = request.headers.get("Authorization")
-    if not DEBUG_MODE and (not auth or not auth.startswith("Bearer ")):
-        error_response(401, "Missing or invalid bearer token")
+    ensure_allowed_host()
 
     bucket, path = parse_bucket_and_path(file_param)
     meta = ensure_object_exists(bucket, path)
@@ -224,9 +237,7 @@ def download_file():
     if not file_param:
         error_response(400, "file path is required")
 
-    auth = request.headers.get("Authorization")
-    if not DEBUG_MODE and (not auth or not auth.startswith("Bearer ")):
-        error_response(401, "Missing or invalid bearer token")
+    ensure_allowed_host()
 
     bucket, path = parse_bucket_and_path(file_param)
     meta = ensure_object_exists(bucket, path)
@@ -252,4 +263,4 @@ def download_file():
 # ------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8085, debug=True)
+    app.run(host="0.0.0.0", port=8085)
