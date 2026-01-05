@@ -69,7 +69,7 @@ def ensure_allowed_host():
     # Prefer Host header to align with typical reverse proxies
     host_header = request.headers.get("Host", "").lower()
     host = host_header.split(":", 1)[0]
-    logger.debug("Host check: header=%r parsed=%r allowed=%s", host_header, host, ALLOWED_HOSTS)
+    logger.info("Host check: header=%r parsed=%r allowed=%s", host_header, host, ALLOWED_HOSTS)
     if not host or host not in ALLOWED_HOSTS:
         error_response(403, "Host not allowed")
 
