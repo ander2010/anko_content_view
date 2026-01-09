@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Dict, Iterable, Tuple
 
 import boto3
@@ -78,26 +79,65 @@ def error_response(status: int, detail: str):
     resp.status_code = status
     return abort(resp)
 
-def parse_bucket_and_path(file: str | None) -> Tuple[str, str]:
+def validate_user_id(user_id: str | None) -> str:
+    if user_id is None:
+        error_response(400, "user_id is required")
+
+    cleaned = user_id.strip()
+    if not cleaned:
+        error_response(400, "user_id is required")
+
+    if not re.match(r"^[A-Za-z0-9._-]+$", cleaned):
+        error_response(400, "Invalid user_id")
+
+    return cleaned
+
+def validate_segments(segments: Iterable[str]) -> None:
+    allowed = re.compile(r"^[A-Za-z0-9._-]+$")
+    for seg in segments:
+        if not allowed.match(seg):
+            error_response(400, "Invalid path")
+
+def parse_bucket_and_path(file: str | None, user_id: str | None) -> Tuple[str, str]:
     if not file:
         error_response(400, "file path is required")
+
+    user_folder = validate_user_id(user_id)
 
     cleaned = file.lstrip("/")
     parts = cleaned.split("/", 1)
 
     bucket = DEFAULT_BUCKET
-    path = cleaned
+    path_after_bucket = cleaned
 
     if len(parts) == 2 and parts[0] != FILES_DIR:
         if parts[0] != DEFAULT_BUCKET:
             error_response(403, "Invalid bucket")
-        path = parts[1]
+        path_after_bucket = parts[1]
 
-    if FILES_DIR_PREFIX and not path.startswith(FILES_DIR_PREFIX):
-        path = f"{FILES_DIR_PREFIX}{path}"
+    relative_path = path_after_bucket.lstrip("/")
+    segments = [seg for seg in relative_path.split("/") if seg and seg != "."]
+    if any(seg == ".." for seg in segments):
+        error_response(400, "Invalid path")
+    validate_segments(segments)
 
-    if not path.startswith(FILES_DIR_PREFIX):
-        error_response(403, "Invalid path")
+    if FILES_DIR:
+        if not segments or segments[0] != FILES_DIR:
+            error_response(403, "Invalid path")
+        if len(segments) < 2:
+            error_response(400, "user folder is required")
+        if segments[1] != user_folder:
+            error_response(403, "Invalid user path")
+        remainder = segments[2:]
+    else:
+        if not segments or segments[0] != user_folder:
+            error_response(403, "Invalid user path")
+        remainder = segments[1:]
+
+    if not remainder:
+        error_response(400, "file path is required")
+
+    path = "/".join([FILES_DIR, user_folder] + remainder) if FILES_DIR else "/".join([user_folder] + remainder)
 
     return bucket, path
 
@@ -213,7 +253,7 @@ def view_file():
 
     ensure_allowed_host()
 
-    bucket, path = parse_bucket_and_path(file_param)
+    bucket, path = parse_bucket_and_path(file_param, request.args.get("user_id"))
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
@@ -240,7 +280,7 @@ def download_file():
 
     ensure_allowed_host()
 
-    bucket, path = parse_bucket_and_path(file_param)
+    bucket, path = parse_bucket_and_path(file_param, request.args.get("user_id"))
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 

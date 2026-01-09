@@ -46,28 +46,29 @@ docker run -p 8085:8085 \
 
 Two endpoints accept `GET` requests:
 
-- `/view?file=<path>` – Streams the object and forces inline rendering.
-- `/download?file=<path>` – Streams the object with `attachment` disposition.
+- `/view?file=<path>&user_id=<id>` – Streams the object and forces inline rendering.
+- `/download?file=<path>&user_id=<id>` – Streams the object with `attachment` disposition.
 
 Notes:
 
+- All requests require a `user_id` query parameter. The `file` path must include the `FILES_DIR` segment followed immediately by that `user_id`, e.g., `documents/<user_id>/...`. The resolved S3 key is forced to `<FILES_DIR>/<user_id>/<path>`, so users can only access their own files.
 - When `DEBUG`/`FLASK_DEBUG` is falsy, requests must come from an allowed `Host` header (default `anko-swart.vercel.app`); no Authorization header is required.
 - Paths are restricted to the `FILES_DIR` prefix. If you include the bucket name in `file`, it must match `SUPABASE_S3_BUCKET`.
 - Range requests are forwarded, so partial downloads work.
 
 ### Examples
 
-View a PDF inline:
+View a PDF inline (path must include `<FILES_DIR>/<user_id>/`):
 
 ```bash
-curl "http://localhost:8085/view?file=reports/invoice.pdf" \
+curl "http://localhost:8085/view?file=documents/123/reports/invoice.pdf&user_id=123" \
   -H "Authorization: Bearer <token>"
 ```
 
 Download a file:
 
 ```bash
-curl -L "http://localhost:8085/download?file=reports/data.csv" \
+curl -L "http://localhost:8085/download?file=documents/123/reports/data.csv&user_id=123" \
   -H "Authorization: Bearer <token>" \
   -o data.csv
 ```
@@ -75,6 +76,6 @@ curl -L "http://localhost:8085/download?file=reports/data.csv" \
 Request from a specific bucket name in the path (must equal the configured bucket):
 
 ```bash
-curl "http://localhost:8085/view?file=my-bucket/reports/invoice.pdf" \
+curl "http://localhost:8085/view?file=my-bucket/documents/123/reports/invoice.pdf&user_id=123" \
   -H "Authorization: Bearer <token>"
 ```
