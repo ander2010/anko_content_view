@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from typing import Dict, Iterable, Tuple
+from urllib.parse import unquote
 
 import boto3
 from botocore.config import Config
@@ -11,6 +12,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 from flask import Flask, Response, abort, jsonify, request
 import requests
+from cryptography.fernet import Fernet, InvalidToken
 
 # ------------------------------------------------------------------------------
 # Setup
@@ -24,6 +26,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("supabase-view")
+
+_fernet = None
 
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for efficient streaming
 
@@ -63,6 +67,28 @@ app = Flask(__name__)
 # Helpers
 # ------------------------------------------------------------------------------
 
+def _get_fernet() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        key = os.getenv("USER_ID_ENC_KEY")
+        if not key:
+            raise RuntimeError("Missing USER_ID_ENC_KEY env var")
+        _fernet = Fernet(key.encode("utf-8"))
+    return _fernet
+
+def decrypt_user_id(token: str) -> int:
+    """
+    Decrypt token back to user_id.
+    Raises ValueError if token is invalid/tampered.
+    """
+    f = _get_fernet()
+    try:
+        raw = f.decrypt(token.encode("utf-8"))
+        return int(raw.decode("utf-8"))
+    except (InvalidToken, ValueError) as e:
+        raise ValueError("Invalid user_id token") from e
+
+
 def ensure_allowed_host():
     if DEBUG_MODE:
         return
@@ -92,28 +118,47 @@ def validate_user_id(user_id: str | None) -> str:
 
     return cleaned
 
+def user_id_from_seed(seed: str | None) -> str:
+    """Decrypt seed token and return a validated user_id string."""
+    if seed is None:
+        error_response(400, "seed is required")
+
+    token_raw = seed.strip()
+    if not token_raw:
+        error_response(400, "seed is required")
+
+    try:
+        token = unquote(token_raw)
+        decrypted_user_id = str(decrypt_user_id(token))
+    except ValueError:
+        error_response(400, "Invalid seed")
+
+    return validate_user_id(decrypted_user_id)
+
 def validate_segments(segments: Iterable[str]) -> None:
     allowed = re.compile(r"^[A-Za-z0-9._-]+$")
     for seg in segments:
         if not allowed.match(seg):
             error_response(400, "Invalid path")
 
-def parse_bucket_and_path(file: str | None, user_id: str | None) -> Tuple[str, str]:
+def parse_bucket_and_path(
+    file: str | None, expected_user_id: str | None, expected_bucket: str | None = None
+) -> Tuple[str, str]:
     if not file:
         error_response(400, "file path is required")
 
-    user_folder = validate_user_id(user_id)
-
     cleaned = file.lstrip("/")
     parts = cleaned.split("/", 1)
+    if len(parts) < 2:
+        error_response(400, "bucket is required in file path")
 
-    bucket = DEFAULT_BUCKET
-    path_after_bucket = cleaned
+    bucket_in_path, path_after_bucket = parts
+    if expected_bucket and bucket_in_path != expected_bucket:
+        error_response(403, "Invalid bucket")
+    bucket = bucket_in_path
 
-    if len(parts) == 2 and parts[0] != FILES_DIR:
-        if parts[0] != DEFAULT_BUCKET:
-            error_response(403, "Invalid bucket")
-        path_after_bucket = parts[1]
+    if FILES_DIR and not path_after_bucket.startswith(FILES_DIR_PREFIX):
+        error_response(403, "Invalid path")
 
     relative_path = path_after_bucket.lstrip("/")
     segments = [seg for seg in relative_path.split("/") if seg and seg != "."]
@@ -126,13 +171,16 @@ def parse_bucket_and_path(file: str | None, user_id: str | None) -> Tuple[str, s
             error_response(403, "Invalid path")
         if len(segments) < 2:
             error_response(400, "user folder is required")
-        if segments[1] != user_folder:
-            error_response(403, "Invalid user path")
+        user_folder = validate_user_id(segments[1])
         remainder = segments[2:]
     else:
-        if not segments or segments[0] != user_folder:
+        if not segments:
             error_response(403, "Invalid user path")
+        user_folder = validate_user_id(segments[0])
         remainder = segments[1:]
+
+    if expected_user_id and user_folder != expected_user_id:
+        error_response(403, "Invalid user path")
 
     if not remainder:
         error_response(400, "file path is required")
@@ -253,7 +301,12 @@ def view_file():
 
     ensure_allowed_host()
 
-    bucket, path = parse_bucket_and_path(file_param, request.args.get("user_id"))
+    user_id = user_id_from_seed(request.args.get("seed"))
+    bucket, path = parse_bucket_and_path(
+        file_param,
+        expected_user_id=user_id,
+        expected_bucket=DEFAULT_BUCKET,
+    )
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
@@ -280,7 +333,12 @@ def download_file():
 
     ensure_allowed_host()
 
-    bucket, path = parse_bucket_and_path(file_param, request.args.get("user_id"))
+    user_id = user_id_from_seed(request.args.get("seed"))
+    bucket, path = parse_bucket_and_path(
+        file_param,
+        expected_user_id=user_id,
+        expected_bucket=DEFAULT_BUCKET,
+    )
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
