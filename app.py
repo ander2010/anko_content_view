@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from io import BytesIO
 from typing import Dict, Iterable, Tuple
 from urllib.parse import unquote
 
@@ -13,6 +14,14 @@ from dotenv import load_dotenv
 from flask import Flask, Response, abort, jsonify, request
 import requests
 from cryptography.fernet import Fernet, InvalidToken
+try:
+    from pypdf import PdfReader, PdfWriter
+except ModuleNotFoundError:
+    try:
+        from PyPDF2 import PdfReader, PdfWriter  # type: ignore[assignment]
+    except ModuleNotFoundError:
+        PdfReader = None  # type: ignore[assignment]
+        PdfWriter = None  # type: ignore[assignment]
 
 # ------------------------------------------------------------------------------
 # Setup
@@ -270,6 +279,63 @@ def stream_from_supabase(
 
     return generate(), resp.status_code, upstream_headers
 
+def parse_page_number(page_value: str | None) -> int:
+    if page_value is None or not page_value.strip():
+        return 1
+
+    try:
+        page = int(page_value)
+    except ValueError:
+        return 1
+
+    return page if page > 0 else 1
+
+def stream_pdf_page_from_supabase(url: str, requested_page: int) -> Tuple[Iterable[bytes], int, Dict[str, str]]:
+    if PdfReader is None or PdfWriter is None:
+        logger.warning("PDF page extraction requested but no PDF library is installed; streaming full file instead.")
+        return stream_from_supabase(url, None)
+
+    try:
+        resp = requests.get(url, timeout=(10, 600), allow_redirects=True)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        error_response(502, f"Upstream error: {exc}")
+
+    try:
+        source = BytesIO(resp.content)
+        reader = PdfReader(source)
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            error_response(422, "PDF has no pages")
+
+        # Fallback to first page when requested page is out of range.
+        page_index = requested_page - 1
+        if page_index >= total_pages:
+            page_index = 0
+
+        writer = PdfWriter()
+        writer.add_page(reader.pages[page_index])
+
+        output = BytesIO()
+        writer.write(output)
+        output.seek(0)
+    except Exception as exc:
+        error_response(422, f"Invalid PDF content: {exc}")
+
+    headers = {
+        "Content-Type": "application/pdf",
+        "Accept-Ranges": "bytes",
+    }
+
+    def generate() -> Iterable[bytes]:
+        while True:
+            chunk = output.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            yield chunk
+
+    return generate(), 200, headers
+
 def build_headers(
     meta: Dict[str, str],
     upstream: Dict[str, str],
@@ -310,10 +376,15 @@ def view_file():
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
-    generator, status, upstream = stream_from_supabase(
-        signed_url,
-        request.headers.get("Range"),
-    )
+    page = parse_page_number(request.args.get("page"))
+
+    if path.lower().endswith(".pdf"):
+        generator, status, upstream = stream_pdf_page_from_supabase(signed_url, page)
+    else:
+        generator, status, upstream = stream_from_supabase(
+            signed_url,
+            request.headers.get("Range"),
+        )
 
     headers = build_headers(meta, upstream, path, inline=True)
 
