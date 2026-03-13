@@ -324,9 +324,9 @@ def view_file():
     page_raw = request.args.get("page")
     if path.lower().endswith(".pdf") and page_raw is not None:
         page = parse_page_number(page_raw)
-        params = request.args.to_dict(flat=True)
-        params.pop("page", None)
-        location = f"{request.path}?{urlencode(params)}#page={page}"
+        params = [(k, v) for k, values in request.args.lists() if k != "page" for v in values]
+        query = urlencode(params, doseq=True)
+        location = f"{request.path}{f'?{query}' if query else ''}#page={page}"
         return redirect(location, code=302)
 
     generator, status, upstream = stream_from_supabase(
