@@ -326,7 +326,9 @@ def view_file():
         page = parse_page_number(page_raw)
         params = [(k, v) for k, values in request.args.lists() if k != "page" for v in values]
         query = urlencode(params, doseq=True)
-        location = f"{request.path}{f'?{query}' if query else ''}#page={page}"
+        # Use a relative redirect so reverse-proxy path prefixes (e.g. /content_view/)
+        # are preserved by the client.
+        location = f"{f'?{query}' if query else ''}#page={page}"
         return redirect(location, code=302)
 
     generator, status, upstream = stream_from_supabase(
