@@ -223,6 +223,13 @@ def build_presigned_url(bucket: str, path: str) -> str:
     except Exception as exc:
         error_response(502, f"Presign failed: {exc}")
 
+def resolve_view_path(path: str) -> str:
+    if path.lower().endswith(".pdf"):
+        return path
+
+    base_path, _ = os.path.splitext(path)
+    return f"{base_path}.pdf"
+
 def stream_from_supabase(
     url: str,
     range_header: str | None,
@@ -318,6 +325,7 @@ def view_file():
         expected_user_id=user_id,
         expected_bucket=DEFAULT_BUCKET,
     )
+    path = resolve_view_path(path)
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
