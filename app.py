@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from typing import Dict, Iterable, Tuple
-from urllib.parse import unquote, urlencode
+from urllib.parse import unquote, urlencode, urlparse
 
 import boto3
 from botocore.config import Config
@@ -104,6 +104,32 @@ def error_response(status: int, detail: str):
     resp = jsonify({"detail": detail})
     resp.status_code = status
     return abort(resp)
+
+def append_vary_header(headers, value: str) -> None:
+    current = headers.get("Vary")
+    if not current:
+        headers["Vary"] = value
+        return
+
+    values = [part.strip() for part in current.split(",") if part.strip()]
+    if value not in values:
+        values.append(value)
+        headers["Vary"] = ", ".join(values)
+
+def get_allowed_origin() -> str | None:
+    origin = request.headers.get("Origin")
+    if not origin:
+        return None
+
+    parsed = urlparse(origin)
+    host = parsed.netloc.split("@")[-1].split(":", 1)[0].lower()
+    if parsed.scheme not in {"http", "https"} or not host:
+        return None
+
+    if host not in ALLOWED_HOSTS:
+        return None
+
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 def validate_user_id(user_id: str | None) -> str:
     if user_id is None:
@@ -230,6 +256,27 @@ def resolve_view_path(path: str) -> str:
     base_path, _ = os.path.splitext(path)
     return f"{base_path}.pdf"
 
+@app.after_request
+def add_cors_headers(response: Response) -> Response:
+    origin = get_allowed_origin()
+    if not origin:
+        return response
+
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = request.headers.get(
+        "Access-Control-Request-Headers",
+        "Range, Content-Type",
+    )
+    response.headers["Access-Control-Expose-Headers"] = (
+        "Accept-Ranges, Content-Disposition, Content-Length, Content-Range, "
+        "Content-Type, ETag, Last-Modified"
+    )
+    response.headers["Access-Control-Max-Age"] = "3600"
+    append_vary_header(response.headers, "Origin")
+    append_vary_header(response.headers, "Access-Control-Request-Headers")
+    return response
+
 def stream_from_supabase(
     url: str,
     range_header: str | None,
@@ -325,7 +372,9 @@ def view_file():
         expected_user_id=user_id,
         expected_bucket=DEFAULT_BUCKET,
     )
+    original_path = path
     path = resolve_view_path(path)
+    logger.info("View request resolved path: original=%r resolved=%r", original_path, path)
     meta = ensure_object_exists(bucket, path)
     signed_url = build_presigned_url(bucket, path)
 
